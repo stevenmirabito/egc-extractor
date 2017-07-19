@@ -18,7 +18,7 @@ def fetch_codes(browser):
     # Get the barcode number
     barcode_number = browser.find_element_by_xpath('//*[@id="barcodeData"]').get_attribute("innerHTML")
     barcode_number = re.sub(r"\s+", '', barcode_number)
-    print(barcode_number)
+
     return (card_number, barcode_number)
 
 
