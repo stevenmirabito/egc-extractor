@@ -9,6 +9,19 @@ from selenium import webdriver
 
 import config
 
+# Fetch codes from DOM
+def fetch_codes(browser):
+    # Get the card number
+    card_number = browser.find_element_by_xpath('//*[@id="cardNumber2"]').text
+    card_number = re.sub(r"\s+", '', card_number)
+
+    # Get the barcode number
+    barcode_number = browser.find_element_by_xpath('//*[@id="barcodeData"]').get_attribute("innerHTML")
+    barcode_number = re.sub(r"\s+", '', barcode_number)
+    print(barcode_number)
+    return (card_number, barcode_number)
+
+
 # Connect to the server
 if config.IMAP_SSL:
     mailbox = IMAP4_SSL(host=config.IMAP_HOST, port=config.IMAP_PORT)
@@ -74,9 +87,13 @@ if status == "OK":
                     # Get the card amount
                     card_amount = browser.find_element_by_xpath('//*[@id="main"]/div[1]/div[2]/h2').text.strip()
 
-                    # Get the card number
-                    card_number = browser.find_element_by_xpath('//*[@id="cardNumber2"]').text
-                    card_number = re.sub(r"\s+", '', card_number)
+                    card_number, barcode_number = fetch_codes(browser)
+
+                    while card_number != barcode_number:
+                        print("WARNING: Erroneous code found. Retrying.")
+                        print("card_number: {}; barcode_number: {}".format(card_number, barcode_number))
+                        browser.get(egc_link['href'])
+                        card_number, barcode_number = fetch_codes(browser)
 
                     # Get the card PIN
                     card_pin = browser.find_element_by_xpath('//*[@id="main"]/div[2]/div[2]/p[2]/span').text
