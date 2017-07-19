@@ -86,10 +86,10 @@ if status == "OK":
                     browser.save_screenshot(os.path.join(screenshots_dir, card_number + '.png'))
 
                     # Write the details to the CSV
-                    csv_writer.writerow([card_amount, card_number, card_pin, card_type, datetime_received])
+                    csv_writer.writerow([card_amount, card_number, card_pin, card_type, datetime_received, egc_link['href']])
 
                     # Print out the details to the console
-                    print("{}: {} {}, {}, {}".format(card_amount, card_number, card_pin, card_type, datetime_received))
+                    print("{}: {} {}, {}, {}".format(card_amount, card_number, card_pin, card_type, datetime_received, egc_link['href']))
                 else:
                     print("ERROR: Unable to find eGC link in message {}, skipping.".format(msg_id.decode('UTF-8')))
             else:
