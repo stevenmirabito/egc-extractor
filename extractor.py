@@ -11,6 +11,13 @@ import config
 
 # Fetch codes from DOM
 def fetch_codes(browser):
+    # Get the type of card
+    card_type = browser.find_element_by_xpath('//*[@id="main"]/p/strong').text.strip()
+    card_type = re.compile(r"Your (.*) eGift card").match(card_type).group(1)
+
+    # Get the card amount
+    card_amount = browser.find_element_by_xpath('//*[@id="main"]/div[1]/div[2]/h2').text.strip()
+
     # Get the card number
     card_number = browser.find_element_by_xpath('//*[@id="cardNumber2"]').text
     card_number = re.sub(r"\s+", '', card_number)
@@ -19,7 +26,7 @@ def fetch_codes(browser):
     barcode_number = browser.find_element_by_xpath('//*[@id="barcodeData"]').get_attribute("innerHTML")
     barcode_number = re.sub(r"\s+", '', barcode_number)
 
-    return (card_number, barcode_number)
+    return (card_type, card_amount, card_number, barcode_number)
 
 
 # Connect to the server
@@ -80,20 +87,13 @@ if status == "OK":
                     # Open the link in the browser
                     browser.get(egc_link['href'])
 
-                    # Get the type of card
-                    card_type = browser.find_element_by_xpath('//*[@id="main"]/p/strong').text.strip()
-                    card_type = re.compile(r"Your (.*) eGift card").match(card_type).group(1)
-
-                    # Get the card amount
-                    card_amount = browser.find_element_by_xpath('//*[@id="main"]/div[1]/div[2]/h2').text.strip()
-
-                    card_number, barcode_number = fetch_codes(browser)
+                    card_type, card_amount, card_number, barcode_number = fetch_codes(browser)
 
                     while card_number != barcode_number:
                         print("WARNING: Erroneous code found. Retrying.")
                         print("card_number: {}; barcode_number: {}".format(card_number, barcode_number))
                         browser.get(egc_link['href'])
-                        card_number, barcode_number = fetch_codes(browser)
+                        card_type, card_amount, card_number, barcode_number = fetch_codes(browser)
 
                     # Get the card PIN
                     card_pin = browser.find_element_by_xpath('//*[@id="main"]/div[2]/div[2]/p[2]/span').text
@@ -103,7 +103,7 @@ if status == "OK":
                     browser.save_screenshot(os.path.join(screenshots_dir, card_number + '.png'))
 
                     # Write the details to the CSV
-                    csv_writer.writerow([card_amount, card_number, card_pin, card_type, datetime_received])
+                    csv_writer.writerow([card_amount, card_number, card_pin, card_type, datetime_received, egc_link['href']])
 
                     # Print out the details to the console
                     print("{}: {} {}, {}, {}".format(card_amount, card_number, card_pin, card_type, datetime_received))
