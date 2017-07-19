@@ -52,7 +52,7 @@ if status == "OK":
                 msg = email.message_from_bytes(data[0][1])
 
                 # Get the HTML body payload
-                msg_html = msg.get_payload(1).get_payload()
+                msg_html = msg.get_payload(1).get_payload(decode=True)
 
                 # Save the email timestamp
                 datetime_received = datetime.fromtimestamp(
