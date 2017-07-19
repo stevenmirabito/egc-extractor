@@ -78,9 +78,12 @@ if status == "OK":
                     card_number = browser.find_element_by_xpath('//*[@id="cardNumber2"]').text
                     card_number = re.sub(r"\s+", '', card_number)
 
-                    # Get the card PIN
-                    card_pin = browser.find_element_by_xpath('//*[@id="main"]/div[2]/div[2]/p[2]/span').text
-                    card_pin = re.sub(r"\s+", '', card_pin)
+                    # Get the card PIN if it exists, otherwise set to N/A
+                    elem = browser.find_elements_by_xpath('//*[@id="main"]/div[2]/div[2]/p[2]/span')
+                    if len(elem) > 0:
+                        card_pin = re.sub(r"\s+", '', browser.find_element_by_xpath('//*[@id="main"]/div[2]/div[2]/p[2]/span').text)
+                    else:
+                        card_pin = 'N/A'
 
                     # Save a screenshot
                     browser.save_screenshot(os.path.join(screenshots_dir, card_number + '.png'))
