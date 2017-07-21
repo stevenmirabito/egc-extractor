@@ -2,6 +2,7 @@ import os
 import email
 import re
 import csv
+import getpass
 from datetime import datetime
 from imaplib import IMAP4, IMAP4_SSL
 from bs4 import BeautifulSoup
@@ -34,6 +35,12 @@ if config.IMAP_SSL:
     mailbox = IMAP4_SSL(host=config.IMAP_HOST, port=config.IMAP_PORT)
 else:
     mailbox = IMAP4(host=config.IMAP_HOST, port=config.IMAP_PORT)
+
+#Prompt for password if not specified
+if config.IMAP_PASSWORD:
+    mypass = config.IMAP_PASSWORD
+else:
+    mypass = getpass.getpass()
 
 # Log in and select the configured folder
 mailbox.login(config.IMAP_USERNAME, config.IMAP_PASSWORD)
