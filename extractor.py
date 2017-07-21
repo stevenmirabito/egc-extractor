@@ -43,7 +43,7 @@ else:
     mypass = getpass.getpass()
 
 # Log in and select the configured folder
-mailbox.login(config.IMAP_USERNAME, config.IMAP_PASSWORD)
+mailbox.login(config.IMAP_USERNAME, mypass)
 mailbox.select(config.FOLDER)
 
 # Search for matching emails
