@@ -1,4 +1,4 @@
-# Staples eGift Card Extractor
+# Universal eGift Card Extractor
 
 This script will attempt to extract the card type, amount, number, and PIN
 given the claim emails sent by Staples.com and write it to a CSV. The script
