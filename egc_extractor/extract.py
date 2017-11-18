@@ -6,6 +6,7 @@ from datetime import datetime
 from imaplib import IMAP4, IMAP4_SSL
 from bs4 import BeautifulSoup
 from selenium import webdriver
+from egc_extractor.util import get_chromedriver_path
 
 
 # Fetch codes from DOM
@@ -55,13 +56,13 @@ def extract(config, merchant, progress, logger):
             return True
 
         # Open the CSV for writing
-        with open('cards_' + datetime.now().strftime('%m-%d-%Y_%H%M%S') + '.csv', 'w', newline='') as csv_file:
+        with open(config.get("paths", "csv")) as csv_file:
             # Start the browser and the CSV writer
-            browser = webdriver.Chrome("/usr/local/bin/chromedriver")
+            browser = webdriver.Chrome(get_chromedriver_path())
             csv_writer = csv.writer(csv_file)
 
             # Create a directory for screenshots if it doesn't already exist
-            screenshots_dir = os.path.join(os.getcwd(), 'screenshots')
+            screenshots_dir = config.get("paths", "screenshots")
             if not os.path.exists(screenshots_dir):
                 os.makedirs(screenshots_dir)
 

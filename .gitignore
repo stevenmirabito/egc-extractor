@@ -4,6 +4,7 @@ config.py
 *.xlsx
 screenshots
 settings.cfg
+/egc_extractor/resources/chromedriver*
 
 ### JetBrains ###
 .idea

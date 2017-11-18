@@ -1,8 +1,10 @@
+import os
+import sys
 import wx
 from wx.adv import Wizard
 import egc_extractor.merchants
 from egc_extractor.config import Configuration
-from egc_extractor.util import get_resource_path
+from egc_extractor.util import get_resource_path, get_chromedriver_path, install_chromedriver
 from egc_extractor.plugin import discover_plugins
 from egc_extractor.wizard.welcome import WelcomePage
 from egc_extractor.wizard.merchant import MerchantChooserPage
@@ -19,7 +21,7 @@ class ExtractorWizard(Wizard):
         self.Bind(wx.adv.EVT_WIZARD_PAGE_CHANGED, self.on_page_changed)
         self.Bind(wx.adv.EVT_WIZARD_PAGE_CHANGING, self.on_page_changing)
 
-        page1 = WelcomePage(self)
+        page1 = WelcomePage(self, config)
         page2 = EmailConnectionPage(self, config)
         page3 = MerchantChooserPage(self, config, merchants)
         page4 = OptionsPage(self, config, merchants)
@@ -57,12 +59,32 @@ class ExtractorWizard(Wizard):
 
 
 def main():
+    app = wx.App()
+
+    init_dialog = wx.BusyInfo("Initializing...")
+
     # Load configuration
     config = Configuration()
 
     # Discover merchant plugins
     merchant_plugins = discover_plugins(egc_extractor.merchants)
 
-    app = wx.App()
+    # Ensure Chromedriver is installed
+    try:
+        if not os.path.isfile(get_chromedriver_path()):
+            del init_dialog
+            init_dialog = wx.BusyInfo("Installing dependencies, this may take a moment...")
+            install_chromedriver()
+    except Exception as e:
+        error_msg = wx.MessageDialog(parent=None,
+                                     message=str(e),
+                                     caption="Unexpected Error",
+                                     style=wx.OK | wx.ICON_ERROR)
+        error_msg.ShowModal()
+        error_msg.Destroy()
+        sys.exit(1)
+
+    # Start wizard
+    del init_dialog
     ExtractorWizard(config, merchant_plugins)
     app.MainLoop()

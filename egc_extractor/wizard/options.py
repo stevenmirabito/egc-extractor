@@ -8,6 +8,7 @@ class OptionsPage(TitledPage):
 
         self.config = config
         self.merchants = merchants
+
         prompt = wx.StaticText(self, -1, "Adjust the following options to change the email scanning scope:")
         self.sizer.Add(prompt, 0, wx.ALL, 5)
 
