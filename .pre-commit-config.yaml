@@ -1,0 +1,39 @@
+repos:
+  - repo: local
+    hooks:
+      - id: isort
+        name: isort
+        stages: [commit]
+        language: system
+        entry: pipenv run isort
+        types: [python]
+
+      - id: black
+        name: black
+        stages: [commit]
+        language: system
+        entry: pipenv run black
+        types: [python]
+
+      - id: flake8
+        name: flake8
+        stages: [commit]
+        language: system
+        entry: pipenv run flake8
+        types: [python]
+        exclude: setup.py
+
+      - id: bandit
+        name: bandit
+        stages: [commit]
+        language: system
+        entry: pipenv run bandit -x config.py -r .
+        types: [python]
+
+      - id: safety
+        name: safety
+        stages: [commit]
+        language: system
+        entry: pipenv run safety check
+        types: [python]
+        pass_filenames: false

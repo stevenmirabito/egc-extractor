@@ -1,16 +1,16 @@
-# Staples eGift Card Extractor
+# eGift Card Extractor
 
 This script will attempt to extract the card type, amount, number, and PIN
-given the claim emails sent by Staples.com and write it to a CSV. The script
-will also take a screenshot of each card and save it to `screenshots` in the
-current working directory.
+given the claim emails sent by various Blackhawk Network affiliates and write
+it to a CSV. The script will also take a screenshot of each card and save it
+to `screenshots` in the current working directory.
 
 ## Installation
 
 Download or clone this repo and install [ChromeDriver](https://sites.google.com/a/chromium.org/chromedriver/).
 Copy `config.sample.py` to `config.py` and update the configuration as needed,
 ensuring that `CHROMEDRIVER_PATH` is a fully-qualified path to the ChromeDriver
-binary. Install the dependencies with `pip install -r requirements.txt`. 
+binary. Install the dependencies with `pipenv install`.
 
 ## Caveats
 
