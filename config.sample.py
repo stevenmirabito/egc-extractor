@@ -8,3 +8,7 @@ IMAP_PASSWORD = ""  # nosec
 
 FOLDER = "INBOX"
 FROM_EMAIL = "DoNotReply.Staples@blackhawk-net.com"
+
+HAPPY_FIRST_NAME = "First"
+HAPPY_LAST_NAME = "Last"
+HAPPY_EMAIL = "you@gmail.com"
