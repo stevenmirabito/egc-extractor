@@ -1,19 +1,35 @@
 import csv
-import email
 import os
 import re
 from datetime import datetime
-from imaplib import IMAP4, IMAP4_SSL
 
 from bs4 import BeautifulSoup
+from imap_tools import AND, MailBox
 from selenium import webdriver
+from selenium.common.exceptions import NoSuchElementException
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 
 import config
 
-BRAND_REGEX = re.compile(r"Your (.*?) (?:\$\d+\s)?e?Gift card", re.IGNORECASE)
+VIEW_LINK_REGEX = re.compile(r".*View.*", re.IGNORECASE)
+BRAND_REGEX = re.compile(r"Your (.*?) (?:\$\d+\s)?(e?Gift|Bonus) card", re.IGNORECASE)
 SPEC_CHARS_REGEX = re.compile(r"[^\w|'|\s]")
 PIN_REGEX = re.compile(r"[A-Z0-9]{4,}")
 AMOUNT_REGEX = re.compile(r"(\$(0|[1-9][0-9]{0,2})(,\d{3})*(\.\d{1,2})?)")
+
+service = Service(config.CHROMEDRIVER_PATH)
+
+
+class WebdriverBrowser:
+    def __enter__(self):
+        self.browser = webdriver.Chrome(service=service)
+        return self.browser
+
+    def __exit__(self, *args, **kwargs):
+        self.browser.close()
 
 
 def try_elements(getters, extract_func=None):
@@ -45,6 +61,13 @@ def extract_brand(text):
         return None
 
 
+def extract_number(text):
+    try:
+        return re.sub(r"\s+", "", text)
+    except Exception:
+        return None
+
+
 def extract_amount(text):
     try:
         return AMOUNT_REGEX.search(text).group(1)
@@ -64,10 +87,11 @@ def fetch_codes(browser):
     # Get the card brand
     card_type = try_elements(
         [
-            lambda: browser.find_element_by_xpath('//*[@id="main"]/p/strong'),
-            lambda: browser.find_element_by_id("vgcheader"),
-            lambda: browser.find_element_by_xpath("//title"),
-            lambda: browser.find_element_by_tag_name("h1"),
+            lambda: browser.find_element(By.XPATH, '//*[@id="main"]/p/strong'),
+            lambda: browser.find_element(By.ID, "vgcheader"),
+            lambda: browser.find_element(By.XPATH, "//title"),
+            lambda: browser.find_element(By.CLASS_NAME, "section-header"),
+            lambda: browser.find_element(By.TAG_NAME, "h1"),
         ],
         extract_func=extract_brand,
     )
@@ -76,15 +100,30 @@ def fetch_codes(browser):
         raise RuntimeError("Unable to find card type on page")
 
     # Get the card number
-    card_number = browser.find_element_by_id("cardNumber2").text
-    card_number = re.sub(r"\s+", "", card_number)
+    card_number = try_elements(
+        [
+            lambda: browser.find_element(By.ID, "cardNumber2"),
+            lambda: browser.find_element(
+                By.CSS_SELECTOR,
+                (
+                    "div[aria-label$='Card Number'] "
+                    ".utility-button-secondary-text-style"
+                ),
+            ),
+        ],
+        extract_func=extract_number,
+    )
+
+    if card_number is None:
+        raise RuntimeError("Unable to find card number on page")
 
     card_amount = try_elements(
         [
-            lambda: browser.find_element_by_id("value"),
-            lambda: browser.find_element_by_xpath('//*[@id="main"]/div[1]/div[2]/h2'),
-            lambda: browser.find_element_by_id("amount"),
-            lambda: browser.find_element_by_tag_name("h1"),
+            lambda: browser.find_element(By.ID, "value"),
+            lambda: browser.find_element(By.ID, "amount"),
+            lambda: browser.find_element(By.ID, "balance-amount"),
+            lambda: browser.find_element(By.XPATH, '//*[@id="main"]/div[1]/div[2]/h2'),
+            lambda: browser.find_element(By.TAG_NAME, "h1"),
         ],
         extract_func=extract_amount,
     )
@@ -94,13 +133,17 @@ def fetch_codes(browser):
 
     card_pin = try_elements(
         [
-            lambda: browser.find_element_by_id("secCode"),
-            lambda: browser.find_element_by_id("securityCode"),
-            lambda: browser.find_element_by_id("pinContainer"),
-            lambda: browser.find_element_by_xpath(
-                '//*[@id="main"]/div[2]/div[2]/p[2]/span'
+            lambda: browser.find_element(By.ID, "secCode"),
+            lambda: browser.find_element(By.ID, "securityCode"),
+            lambda: browser.find_element(By.ID, "pinContainer"),
+            lambda: browser.find_element(
+                By.CSS_SELECTOR,
+                ("div[aria-label='Copy PIN'] " ".utility-button-secondary-text-style"),
             ),
-            lambda: browser.find_element_by_xpath('//*[@id="main"]/div[4]/p[2]/span'),
+            lambda: browser.find_element(
+                By.XPATH, '//*[@id="main"]/div[2]/div[2]/p[2]/span'
+            ),
+            lambda: browser.find_element(By.XPATH, '//*[@id="main"]/div[4]/p[2]/span'),
         ],
         extract_func=extract_pin,
     )
@@ -111,115 +154,98 @@ def fetch_codes(browser):
     return (card_type, card_amount, card_number, card_pin)
 
 
+def process_messages(browser, csv_writer, messages, screenshots_dir=None):
+    for msg in messages:
+        print(f"---> Processing message id {msg.uid}...")
+
+        # Parse the message
+        msg_parsed = BeautifulSoup(msg.html, "html.parser")
+
+        # Find the "View Gift" link
+        egc_links = msg_parsed.find_all("a", href=True, text=VIEW_LINK_REGEX)
+        for egc_link in egc_links:
+            # Open the link in the browser
+            browser.get(egc_link["href"])
+
+            # Handle security page
+            try:
+                email_field = browser.find_element(By.ID, "challenge-email")
+                email_field.send_keys(msg.to)
+                submit_btn = browser.find_element(
+                    By.CSS_SELECTOR, "button[type='submit']"
+                )
+                submit_btn.click()
+            except NoSuchElementException:
+                pass
+
+            # Skip the envelope
+            try:
+                skip_btn = browser.find_element(By.ID, "skip")
+                WebDriverWait(browser, 10).until(EC.element_to_be_clickable(skip_btn))
+                skip_btn.click()
+            except NoSuchElementException:
+                pass
+
+            card_type, card_amount, card_number, card_pin = fetch_codes(browser)
+
+            # Save a screenshot
+            if screenshots_dir:
+                browser.save_screenshot(
+                    os.path.join(screenshots_dir, card_number + ".png")
+                )
+
+            # Write the details to the CSV
+            csv_writer.writerow(
+                [
+                    card_type,
+                    card_number,
+                    card_pin,
+                    card_amount,
+                    msg.date,
+                    browser.current_url,
+                ]
+            )
+
+            # Print out the details to the console
+            print(
+                f"{card_type}: {card_number} {card_pin}, " f"{card_amount}, {msg.date}"
+            )
+
+        if len(egc_links) < 1:
+            print("ERROR: Unable to find eGC link in message " f"{msg.uid}, skipping.")
+    else:
+        print("ERROR: Unable to fetch message " f"{msg.uid}, skipping.")
+
+
 def main():
     # Connect to the server
-    if config.IMAP_SSL:
-        mailbox = IMAP4_SSL(host=config.IMAP_HOST, port=config.IMAP_PORT)
-    else:
-        mailbox = IMAP4(host=config.IMAP_HOST, port=config.IMAP_PORT)
+    with MailBox(config.IMAP_HOST, port=config.IMAP_PORT).login(
+        config.IMAP_USERNAME, config.IMAP_PASSWORD, initial_folder=config.FOLDER
+    ) as mailbox:
+        messages = mailbox.fetch(AND(from_=config.FROM_EMAIL))
 
-    # Log in and select the configured folder
-    mailbox.login(config.IMAP_USERNAME, config.IMAP_PASSWORD)
-    mailbox.select(config.FOLDER)
+        # Start the browser
+        with WebdriverBrowser() as browser:
+            # Open the CSV for writing
+            with open(
+                "cards_" + datetime.now().strftime("%m-%d-%Y_%H%M%S") + ".csv",
+                "w",
+                newline="",
+            ) as csv_file:
+                # Start the CSV writer
+                csv_writer = csv.writer(csv_file)
 
-    # Search for matching emails
-    status, messages = mailbox.search(None, f"(FROM {config.FROM_EMAIL})")
-    if status == "OK":
-        # Convert the result list to an array of message IDs
-        messages = messages[0].split()
+                # Create a directory for screenshots if it doesn't already exist
+                if config.SCREENSHOTS:
+                    screenshots_dir = os.path.join(os.getcwd(), "screenshots")
+                    if not os.path.exists(screenshots_dir):
+                        os.makedirs(screenshots_dir)
 
-        if len(messages) < 1:
-            # No matching messages, stop
-            print("No matching messages found, nothing to do.")
-            exit()
-
-        # Open the CSV for writing
-        with open(
-            "cards_" + datetime.now().strftime("%m-%d-%Y_%H%M%S") + ".csv",
-            "w",
-            newline="",
-        ) as csv_file:
-            # Start the browser and the CSV writer
-            browser = webdriver.Chrome(config.CHROMEDRIVER_PATH)
-            csv_writer = csv.writer(csv_file)
-
-            # Create a directory for screenshots if it doesn't already exist
-            screenshots_dir = os.path.join(os.getcwd(), "screenshots")
-            if not os.path.exists(screenshots_dir):
-                os.makedirs(screenshots_dir)
-
-            # For each matching email...
-            for msg_id in messages:
-                print(f"---> Processing message id {msg_id.decode('UTF-8')}...")
-
-                # Fetch it from the server
-                status, data = mailbox.fetch(msg_id, "(RFC822)")
-                if status == "OK":
-                    # Convert it to an Email object
-                    msg = email.message_from_bytes(data[0][1])
-
-                    # Get the HTML body payload
-                    msg_html = msg.get_payload(decode=True)
-
-                    # Save the email timestamp
-                    datetime_received = datetime.fromtimestamp(
-                        email.utils.mktime_tz(email.utils.parsedate_tz(msg.get("date")))
+                    process_messages(
+                        browser, csv_writer, messages, screenshots_dir=screenshots_dir
                     )
-
-                    # Parse the message
-                    msg_parsed = BeautifulSoup(msg_html, "html.parser")
-
-                    # Find the "View Gift" link
-                    egc_links = msg_parsed.findAll(
-                        "a", href=True, text=re.compile("Click to View")
-                    )
-                    for egc_link in egc_links:
-                        # Open the link in the browser
-                        browser.get(egc_link["href"])
-
-                        card_type, card_amount, card_number, card_pin = fetch_codes(
-                            browser
-                        )
-
-                        # Save a screenshot
-                        browser.save_screenshot(
-                            os.path.join(screenshots_dir, card_number + ".png")
-                        )
-
-                        # Write the details to the CSV
-                        csv_writer.writerow(
-                            [
-                                card_type,
-                                card_number,
-                                card_pin,
-                                card_amount,
-                                datetime_received,
-                                browser.current_url,
-                            ]
-                        )
-
-                        # Print out the details to the console
-                        print(
-                            f"{card_type}: {card_number} {card_pin}, "
-                            f"{card_amount}, {datetime_received}"
-                        )
-
-                    if len(egc_links) < 1:
-                        print(
-                            "ERROR: Unable to find eGC link in message "
-                            f"{msg_id.decode('UTF-8')}, skipping."
-                        )
                 else:
-                    print(
-                        "ERROR: Unable to fetch message "
-                        f"{msg_id.decode('UTF-8')}, skipping."
-                    )
-
-            # Close the browser
-            browser.close()
-    else:
-        print("FATAL ERROR: Unable to fetch list of messages from server.")
-        exit(1)
+                    process_messages(browser, csv_writer, messages)
 
 
 if __name__ == "__main__":
