@@ -15,7 +15,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 import config
 
-VIEW_LINK_REGEX = re.compile(r".*View (?!this email).*", re.IGNORECASE)
+VIEW_LINK_REGEX = re.compile(r"(LINK|.*View (?!this email).*)", re.IGNORECASE)
 BRAND_REGEX = re.compile(
     r"(Your )?(.*?) (?:\$\d+\s)?(e?Gift|Bonus) card", re.IGNORECASE
 )
@@ -114,6 +114,7 @@ def fetch_codes(browser, has_pin=True):
                     ".utility-button-secondary-text-style"
                 ),
             ),
+            lambda: browser.find_element(By.ID, "redeem"),
         ],
         extract_func=extract_number,
     )
@@ -127,6 +128,7 @@ def fetch_codes(browser, has_pin=True):
             lambda: browser.find_element(By.ID, "amount"),
             lambda: browser.find_element(By.ID, "balance-amount"),
             lambda: browser.find_element(By.ID, "giftvalue"),
+            lambda: browser.find_element(By.ID, "giftCardLink"),
             lambda: browser.find_element(By.XPATH, '//*[@id="main"]/div[1]/div[2]/h2'),
             lambda: browser.find_element(By.TAG_NAME, "h1"),
         ],
