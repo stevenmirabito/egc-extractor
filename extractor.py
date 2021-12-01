@@ -1,3 +1,4 @@
+import argparse
 import csv
 import os
 import re
@@ -14,8 +15,10 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 import config
 
-VIEW_LINK_REGEX = re.compile(r".*View.*", re.IGNORECASE)
-BRAND_REGEX = re.compile(r"Your (.*?) (?:\$\d+\s)?(e?Gift|Bonus) card", re.IGNORECASE)
+VIEW_LINK_REGEX = re.compile(r".*View (?!this email).*", re.IGNORECASE)
+BRAND_REGEX = re.compile(
+    r"(Your )?(.*?) (?:\$\d+\s)?(e?Gift|Bonus) card", re.IGNORECASE
+)
 SPEC_CHARS_REGEX = re.compile(r"[^\w|'|\s]")
 PIN_REGEX = re.compile(r"[A-Z0-9]{4,}")
 AMOUNT_REGEX = re.compile(r"(\$(0|[1-9][0-9]{0,2})(,\d{3})*(\.\d{1,2})?)")
@@ -56,7 +59,7 @@ def try_elements(getters, extract_func=None):
 
 def extract_brand(text):
     try:
-        return SPEC_CHARS_REGEX.sub("", BRAND_REGEX.search(text).group(1))
+        return SPEC_CHARS_REGEX.sub("", BRAND_REGEX.search(text).group(2))
     except Exception:
         return None
 
@@ -83,7 +86,7 @@ def extract_pin(text):
 
 
 # Fetch codes from DOM
-def fetch_codes(browser):
+def fetch_codes(browser, has_pin=True):
     # Get the card brand
     card_type = try_elements(
         [
@@ -103,6 +106,7 @@ def fetch_codes(browser):
     card_number = try_elements(
         [
             lambda: browser.find_element(By.ID, "cardNumber2"),
+            lambda: browser.find_element(By.ID, "accountnumber"),
             lambda: browser.find_element(
                 By.CSS_SELECTOR,
                 (
@@ -122,6 +126,7 @@ def fetch_codes(browser):
             lambda: browser.find_element(By.ID, "value"),
             lambda: browser.find_element(By.ID, "amount"),
             lambda: browser.find_element(By.ID, "balance-amount"),
+            lambda: browser.find_element(By.ID, "giftvalue"),
             lambda: browser.find_element(By.XPATH, '//*[@id="main"]/div[1]/div[2]/h2'),
             lambda: browser.find_element(By.TAG_NAME, "h1"),
         ],
@@ -148,13 +153,13 @@ def fetch_codes(browser):
         extract_func=extract_pin,
     )
 
-    if card_pin is None:
+    if has_pin and card_pin is None:
         raise RuntimeError("Unable to find card PIN on page")
 
     return (card_type, card_amount, card_number, card_pin)
 
 
-def process_messages(browser, csv_writer, messages, screenshots_dir=None):
+def process_messages(browser, csv_writer, messages, has_pin=True, screenshots_dir=None):
     for msg in messages:
         print(f"---> Processing message id {msg.uid}...")
 
@@ -163,6 +168,20 @@ def process_messages(browser, csv_writer, messages, screenshots_dir=None):
 
         # Find the "View Gift" link
         egc_links = msg_parsed.find_all("a", href=True, text=VIEW_LINK_REGEX)
+
+        if len(egc_links) < 1:
+            # Check for image link (wgiftcard)
+            activate_img = msg_parsed.find("img", alt=re.compile(r"activate.*"))
+
+            if activate_img:
+                egc_link = activate_img.find_parent("a")
+                if egc_link:
+                    egc_links = [egc_link]
+
+        if len(egc_links) < 1:
+            print("ERROR: Unable to find eGC link in message " f"{msg.uid}, skipping.")
+            continue
+
         for egc_link in egc_links:
             # Open the link in the browser
             browser.get(egc_link["href"])
@@ -186,7 +205,9 @@ def process_messages(browser, csv_writer, messages, screenshots_dir=None):
             except NoSuchElementException:
                 pass
 
-            card_type, card_amount, card_number, card_pin = fetch_codes(browser)
+            card_type, card_amount, card_number, card_pin = fetch_codes(
+                browser, has_pin=has_pin
+            )
 
             # Save a screenshot
             if screenshots_dir:
@@ -211,13 +232,21 @@ def process_messages(browser, csv_writer, messages, screenshots_dir=None):
                 f"{card_type}: {card_number} {card_pin}, " f"{card_amount}, {msg.date}"
             )
 
-        if len(egc_links) < 1:
-            print("ERROR: Unable to find eGC link in message " f"{msg.uid}, skipping.")
-    else:
-        print("ERROR: Unable to fetch message " f"{msg.uid}, skipping.")
-
 
 def main():
+    parser = argparse.ArgumentParser(
+        description="Extract gift cards from delivery emails"
+    )
+
+    parser.add_argument(
+        "--no-pin",
+        dest="pin",
+        action="store_false",
+        help="Specify if the gift cards do not have PINs",
+    )
+
+    args = parser.parse_args()
+
     # Connect to the server
     with MailBox(config.IMAP_HOST, port=config.IMAP_PORT).login(
         config.IMAP_USERNAME, config.IMAP_PASSWORD, initial_folder=config.FOLDER
@@ -242,10 +271,14 @@ def main():
                         os.makedirs(screenshots_dir)
 
                     process_messages(
-                        browser, csv_writer, messages, screenshots_dir=screenshots_dir
+                        browser,
+                        csv_writer,
+                        messages,
+                        has_pin=args.pin,
+                        screenshots_dir=screenshots_dir,
                     )
                 else:
-                    process_messages(browser, csv_writer, messages)
+                    process_messages(browser, csv_writer, messages, has_pin=args.pin)
 
 
 if __name__ == "__main__":
