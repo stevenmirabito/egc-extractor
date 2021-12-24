@@ -169,7 +169,14 @@ def process_messages(browser, csv_writer, messages, has_pin=True, screenshots_di
         msg_parsed = BeautifulSoup(msg.html, "html.parser")
 
         # Find the "View Gift" link
-        egc_links = msg_parsed.find_all("a", href=True, text=VIEW_LINK_REGEX)
+        egc_links = []
+        for link in msg_parsed.find_all(True, text=VIEW_LINK_REGEX):
+            if link.name == "a":
+                egc_links.append(link)
+            else:
+                parent_link = link.find_parent("a")
+                if parent_link:
+                    egc_links.append(parent_link)
 
         if len(egc_links) < 1:
             # Check for image link (wgiftcard)
