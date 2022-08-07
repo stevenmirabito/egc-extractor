@@ -2,12 +2,14 @@ import argparse
 import csv
 import os
 import re
+import time
+import json
 from datetime import datetime
 
 from bs4 import BeautifulSoup
 from imap_tools import AND, MailBox
 from selenium import webdriver
-from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
@@ -15,13 +17,15 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 import config
 
-VIEW_LINK_REGEX = re.compile(r"(LINK|.*View (?!this email).*)", re.IGNORECASE)
+VIEW_LINK_REGEX = re.compile(r"(LINK|.*(View|Get) (?!this email).*)", re.IGNORECASE)
 BRAND_REGEX = re.compile(
     r"(Your )?(.*?) (?:\$\d+\s)?(e?Gift|Bonus) card", re.IGNORECASE
 )
 SPEC_CHARS_REGEX = re.compile(r"[^\w|'|\s]")
 PIN_REGEX = re.compile(r"[A-Z0-9]{4,}")
 AMOUNT_REGEX = re.compile(r"(\$(0|[1-9][0-9]{0,2})(,\d{3})*(\.\d{1,2})?)")
+VCDELIVERY_URL_REGEX = re.compile(".*vcdelivery\.com.*")
+RECAPTCHA_XPATH = '//iframe[contains(@title, "recaptcha")]'
 
 service = Service(config.CHROMEDRIVER_PATH)
 
@@ -151,6 +155,7 @@ def fetch_codes(browser, has_pin=True):
                 By.XPATH, '//*[@id="main"]/div[2]/div[2]/p[2]/span'
             ),
             lambda: browser.find_element(By.XPATH, '//*[@id="main"]/div[4]/p[2]/span'),
+            lambda: browser.find_element(By.XPATH, '//*[@id="pin-num"]/span'),
         ],
         extract_func=extract_pin,
     )
@@ -158,10 +163,29 @@ def fetch_codes(browser, has_pin=True):
     if has_pin and card_pin is None:
         raise RuntimeError("Unable to find card PIN on page")
 
-    return (card_type, card_amount, card_number, card_pin)
+    return card_type, card_amount, card_number, card_pin
+
+
+# Extract codes from vcdelivery config
+def extract_vcdelivery(browser, has_pin=True):
+    config_el = browser.find_element(By.ID, "ids-configuration")
+    cert = json.loads(config_el.get_attribute('data-certificate'))
+    brand = json.loads(config_el.get_attribute('data-configuration'))
+
+    card_type = brand[0]['settings']['brandName']
+    card_amount = "{:.2f}".format(cert['InitialBalance'])
+    card_number = cert['CardNumber']
+    card_pin = cert['Pin']
+
+    if has_pin and card_pin is None:
+        raise RuntimeError("Unable to find card PIN in certificate configuration")
+
+    return card_type, card_amount, card_number, card_pin
 
 
 def process_messages(browser, csv_writer, messages, has_pin=True, screenshots_dir=None):
+    mgcp_logged_in = False
+    requires_mgcp_login = False
     for msg in messages:
         print(f"---> Processing message id {msg.uid}...")
 
@@ -170,13 +194,20 @@ def process_messages(browser, csv_writer, messages, has_pin=True, screenshots_di
 
         # Find the "View Gift" link
         egc_links = []
-        for link in msg_parsed.find_all(True, text=VIEW_LINK_REGEX):
-            if link.name == "a":
-                egc_links.append(link)
-            else:
-                parent_link = link.find_parent("a")
-                if parent_link:
-                    egc_links.append(parent_link)
+        # Check for MyGiftCardsPlus
+        for link in msg_parsed.find_all("a", href=re.compile(r".*mygiftcardsplus.com\/card.*")):
+            egc_links.append(link)
+            requires_mgcp_login = True
+
+        # Check for most other retailers
+        if len(egc_links) < 1:
+            for link in msg_parsed.find_all(True, text=VIEW_LINK_REGEX):
+                if link.name == "a":
+                    egc_links.append(link)
+                else:
+                    parent_link = link.find_parent("a")
+                    if parent_link:
+                        egc_links.append(parent_link)
 
         if len(egc_links) < 1:
             # Check for image link (wgiftcard)
@@ -190,6 +221,18 @@ def process_messages(browser, csv_writer, messages, has_pin=True, screenshots_di
         if len(egc_links) < 1:
             print("ERROR: Unable to find eGC link in message " f"{msg.uid}, skipping.")
             continue
+
+        if requires_mgcp_login and not mgcp_logged_in:
+            # Prompt user to log into MyGiftCardsPlus
+            print("ACTION REQUIRED: Please log into MyGiftCardsPlus to continue")
+            browser.get("https://www.mygiftcardsplus.com/auth/login")
+            try:
+                WebDriverWait(browser, 30).until(
+                    lambda driver: driver.current_url == "https://www.mygiftcardsplus.com/"
+                )
+                mgcp_logged_in = True
+            except TimeoutException:
+                print("Timeout waiting for login, aborting.")
 
         for egc_link in egc_links:
             # Open the link in the browser
@@ -206,7 +249,7 @@ def process_messages(browser, csv_writer, messages, has_pin=True, screenshots_di
             except NoSuchElementException:
                 pass
 
-            # Skip the envelope
+            # Skip the envelope (PayPal)
             try:
                 skip_btn = browser.find_element(By.ID, "skip")
                 WebDriverWait(browser, 10).until(EC.element_to_be_clickable(skip_btn))
@@ -214,9 +257,28 @@ def process_messages(browser, csv_writer, messages, has_pin=True, screenshots_di
             except NoSuchElementException:
                 pass
 
-            card_type, card_amount, card_number, card_pin = fetch_codes(
-                browser, has_pin=has_pin
-            )
+            # Skip the envelope (Cardago)
+            try:
+                skip_btn = browser.find_element(By.XPATH, '//a[contains(text(), "CLICK HERE TO USE YOUR GIFT CARD")]')
+                WebDriverWait(browser, 10).until(EC.element_to_be_clickable(skip_btn))
+                time.sleep(2)  # Wait for animation to finish
+                skip_btn.click()
+                time.sleep(2)  # Wait for CAPTCHA validation
+                browser.find_element(By.XPATH, RECAPTCHA_XPATH)
+                print("ACTION REQUIRED: Please complete CAPTCHA challenge")
+                WebDriverWait(browser, 30).until_not(EC.presence_of_element_located((By.XPATH, RECAPTCHA_XPATH)))
+                time.sleep(1)  # Wait for page navigation
+            except NoSuchElementException:
+                pass
+
+            if VCDELIVERY_URL_REGEX.match(browser.current_url):
+                card_type, card_amount, card_number, card_pin = extract_vcdelivery(
+                    browser, has_pin=has_pin
+                )
+            else:
+                card_type, card_amount, card_number, card_pin = fetch_codes(
+                    browser, has_pin=has_pin
+                )
 
             # Save a screenshot
             if screenshots_dir:
