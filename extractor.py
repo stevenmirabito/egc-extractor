@@ -25,7 +25,6 @@ SPEC_CHARS_REGEX = re.compile(r"[^\w|'|\s]")
 PIN_REGEX = re.compile(r"[A-Z0-9]{4,}")
 AMOUNT_REGEX = re.compile(r"(\$(0|[1-9][0-9]{0,2})(,\d{3})*(\.\d{1,2})?)")
 VCDELIVERY_URL_REGEX = re.compile(".*vcdelivery\.com.*")
-RECAPTCHA_XPATH = '//iframe[contains(@title, "recaptcha")]'
 
 service = Service(config.CHROMEDRIVER_PATH)
 
@@ -149,7 +148,7 @@ def fetch_codes(browser, has_pin=True):
             lambda: browser.find_element(By.ID, "pinContainer"),
             lambda: browser.find_element(
                 By.CSS_SELECTOR,
-                ("div[aria-label='Copy PIN'] " ".utility-button-secondary-text-style"),
+                "div[aria-label='Copy PIN'] " ".utility-button-secondary-text-style",
             ),
             lambda: browser.find_element(
                 By.XPATH, '//*[@id="main"]/div[2]/div[2]/p[2]/span'
@@ -181,6 +180,13 @@ def extract_vcdelivery(browser, has_pin=True):
         raise RuntimeError("Unable to find card PIN in certificate configuration")
 
     return card_type, card_amount, card_number, card_pin
+
+
+def handle_captcha(browser, captcha_el, timeout=5):
+    WebDriverWait(browser, timeout).until(EC.presence_of_element_located(captcha_el))
+    print("ACTION REQUIRED: Please complete CAPTCHA challenge")
+    WebDriverWait(browser, 30).until_not(EC.presence_of_element_located(captcha_el))
+    time.sleep(1)  # Wait for page navigation
 
 
 def process_messages(browser, csv_writer, messages, has_pin=True, screenshots_dir=None):
@@ -238,37 +244,39 @@ def process_messages(browser, csv_writer, messages, has_pin=True, screenshots_di
             # Open the link in the browser
             browser.get(egc_link["href"])
 
-            # Handle security page
+            # Handle security page (Cashstar)
             try:
                 email_field = browser.find_element(By.ID, "challenge-email")
                 email_field.send_keys(msg.to)
-                submit_btn = browser.find_element(
-                    By.CSS_SELECTOR, "button[type='submit']"
-                )
-                submit_btn.click()
-            except NoSuchElementException:
+                submit_btn_el = (By.CSS_SELECTOR, "button[type='submit']")
+                WebDriverWait(browser, 5).until(EC.element_to_be_clickable(submit_btn_el))
+                browser.find_element(*submit_btn_el).click()
+                captcha_el = (By.XPATH, '//iframe[@data-e2e="enforcement-frame" and contains(@class, "show")]')
+                handle_captcha(browser, captcha_el)
+            except (NoSuchElementException, TimeoutException):
                 pass
 
-            # Skip the envelope (PayPal)
+            # Skip the envelope (PayPal, Cashstar)
             try:
-                skip_btn = browser.find_element(By.ID, "skip")
-                WebDriverWait(browser, 10).until(EC.element_to_be_clickable(skip_btn))
+                skip_btn_el = (By.ID, "skip")
+                WebDriverWait(browser, 5).until(EC.presence_of_element_located(skip_btn_el))
+                skip_btn = browser.find_element(*skip_btn_el)
+                WebDriverWait(browser, 5).until(EC.element_to_be_clickable(skip_btn))
                 skip_btn.click()
-            except NoSuchElementException:
+            except (NoSuchElementException, TimeoutException):
                 pass
 
             # Skip the envelope (Cardago)
             try:
-                skip_btn = browser.find_element(By.XPATH, '//a[contains(text(), "CLICK HERE TO USE YOUR GIFT CARD")]')
-                WebDriverWait(browser, 10).until(EC.element_to_be_clickable(skip_btn))
+                skip_btn_el = (By.XPATH, '//a[contains(text(), "CLICK HERE TO USE YOUR GIFT CARD")]')
+                WebDriverWait(browser, 5).until(EC.presence_of_element_located(skip_btn_el))
+                skip_btn = browser.find_element(*skip_btn_el)
+                WebDriverWait(browser, 5).until(EC.element_to_be_clickable(skip_btn))
                 time.sleep(2)  # Wait for animation to finish
                 skip_btn.click()
-                time.sleep(2)  # Wait for CAPTCHA validation
-                browser.find_element(By.XPATH, RECAPTCHA_XPATH)
-                print("ACTION REQUIRED: Please complete CAPTCHA challenge")
-                WebDriverWait(browser, 30).until_not(EC.presence_of_element_located((By.XPATH, RECAPTCHA_XPATH)))
-                time.sleep(1)  # Wait for page navigation
-            except NoSuchElementException:
+                captcha_el = (By.XPATH, '//iframe[contains(@title, "recaptcha")]')
+                handle_captcha(browser, captcha_el, timeout=2)
+            except (NoSuchElementException, TimeoutException):
                 pass
 
             if VCDELIVERY_URL_REGEX.match(browser.current_url):
@@ -320,7 +328,7 @@ def main():
 
     # Connect to the server
     with MailBox(config.IMAP_HOST, port=config.IMAP_PORT).login(
-        config.IMAP_USERNAME, config.IMAP_PASSWORD, initial_folder=config.FOLDER
+            config.IMAP_USERNAME, config.IMAP_PASSWORD, initial_folder=config.FOLDER
     ) as mailbox:
         messages = mailbox.fetch(AND(from_=config.FROM_EMAIL))
 
@@ -328,9 +336,9 @@ def main():
         with WebdriverBrowser() as browser:
             # Open the CSV for writing
             with open(
-                "cards_" + datetime.now().strftime("%m-%d-%Y_%H%M%S") + ".csv",
-                "w",
-                newline="",
+                    "cards_" + datetime.now().strftime("%m-%d-%Y_%H%M%S") + ".csv",
+                    "w",
+                    newline="",
             ) as csv_file:
                 # Start the CSV writer
                 csv_writer = csv.writer(csv_file)
